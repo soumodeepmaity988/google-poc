@@ -1,103 +1,358 @@
-import Image from "next/image";
 
-export default function Home() {
+"use client";
+
+import React, {useState, useEffect, useRef} from "react";
+import ReactMarkdown from "react-markdown";
+import {FaMicrophone, FaPlus, FaStop, FaSpinner} from "react-icons/fa";
+import {motion, AnimatePresence} from "framer-motion";
+import {v4 as uuidv4} from "uuid";
+
+interface Message {
+  sender: "user" | "model" | "system";
+  text: string;
+  id: number;
+  isPending?: boolean;
+}
+
+const getUserId = (): string => {
+  let userId = localStorage.getItem("userId");
+  if (!userId) {
+    userId = uuidv4();
+    localStorage.setItem("userId", userId);
+  }
+  return userId;
+};
+
+const getSessionId = (): string | null => localStorage.getItem("sessionId");
+const setSessionId = (id: string) => localStorage.setItem("sessionId", id);
+
+function App() {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [isChatLoading, setIsChatLoading] = useState<boolean>(false);
+  const [isRecording, setIsRecording] = useState<boolean>(false);
+  const [audioBase64, setAudioBase64] = useState<string | null>(null);
+  const [isProcessingAudio, setIsProcessingAudio] = useState<boolean>(false);
+  const [convertedText, setConvertedText] = useState<string>("");
+  const [hasSession, setHasSession] = useState<boolean>(false);
+  const [userId, setUserId] = useState<string>("");
+  const [sessionId, setSessionIdState] = useState<string>("");
+  const [isHistoryLoading, setIsHistoryLoading] = useState<boolean>(false);
+  const [isSessionCreating, setIsSessionCreating] = useState<boolean>(false);
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const uid = getUserId();
+    const sid = getSessionId();
+    setUserId(uid);
+    if (sid) {
+      setSessionIdState(sid);
+      setHasSession(true);
+      setIsHistoryLoading(true);
+      fetchSessionEvents(uid, sid);
+    }
+  }, []);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({behavior: "smooth"});
+  }, [messages]);
+
+  const fetchSessionEvents = async (uid: string, sid: string) => {
+    try {
+      const response = await fetch("/api/chat-history", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          projectId: process.env.NEXT_PUBLIC_PROJECTID,
+          location: process.env.NEXT_PUBLIC_LOCATION,
+          agentId: process.env.NEXT_PUBLIC_AGENTID,
+          sessionId: sid,
+        }),
+      });
+      const data = await response.json();
+      if (data?.events) {
+        const restoredMessages: Message[] = data.events.map(
+          (event: any, index: number) => ({
+            id: Date.now() + index,
+            sender: event.role === "user" ? "user" : "model",
+            text: event.content || "",
+          })
+        );
+        setMessages(restoredMessages);
+      }
+    } catch (error) {
+      console.error("Failed to fetch session events:", error);
+    } finally {
+      setIsHistoryLoading(false);
+    }
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({audio: true});
+      mediaRecorderRef.current = new MediaRecorder(stream);
+      audioChunksRef.current = [];
+
+      mediaRecorderRef.current.ondataavailable = (event: BlobEvent) => {
+        audioChunksRef.current.push(event.data);
+      };
+
+      mediaRecorderRef.current.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, {type: "audio/wav"});
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const base64data = reader.result as string;
+          setAudioBase64(base64data);
+        };
+        reader.readAsDataURL(audioBlob);
+      };
+
+      mediaRecorderRef.current.start();
+      setIsRecording(true);
+    } catch (error) {
+      console.error("Error starting recording:", error);
+    }
+  };
+
+  async function convertToText() {
+    try {
+      setIsProcessingAudio(true);
+      const response = await fetch("/api/speech-to-text", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({audio: audioBase64}),
+      });
+      const data = await response.json();
+      const transcript = data.results[0].alternatives[0].transcript;
+      setConvertedText(transcript);
+      addMessage("user", transcript);
+      return data;
+    } catch (error) {
+      console.error("Error converting speech to text:", error);
+    } finally {
+      setIsProcessingAudio(false);
+    }
+  }
+
+  async function callReasoningEngine(
+    message: string,
+    uid: string,
+    sid: string
+  ) {
+    const pendingMessageId = Date.now();
+    try {
+      setIsChatLoading(true);
+      setMessages((prev) => [
+        ...prev,
+        {sender: "model", text: "", id: pendingMessageId, isPending: true},
+      ]);
+
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({message, userId: uid, sessionId: sid}),
+      });
+
+      const reader = response.body?.getReader();
+      if (!reader) return;
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let fullResponse = "";
+
+      while (true) {
+        const {done, value} = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, {stream: true});
+        const lines = buffer.split("\n");
+
+        for (let i = 0; i < lines.length - 1; i++) {
+          const line = lines[i].trim();
+          if (!line) continue;
+          try {
+            const parsedData = JSON.parse(line);
+            const textChunk = parsedData?.content?.parts[0]?.text || "";
+            fullResponse += textChunk;
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === pendingMessageId
+                  ? {...msg, text: fullResponse, isPending: false}
+                  : msg
+              )
+            );
+          } catch {}
+        }
+        buffer = lines[lines.length - 1];
+      }
+    } catch (error) {
+      console.error("Reasoning engine error:", error);
+    } finally {
+      setIsChatLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (convertedText && userId && sessionId) {
+      callReasoningEngine(convertedText, userId, sessionId);
+    }
+  }, [convertedText]);
+
+  useEffect(() => {
+    if (audioBase64) convertToText();
+  }, [audioBase64]);
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current?.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current.stream
+        ?.getTracks()
+        .forEach((track) => track.stop());
+      setIsRecording(false);
+    }
+  };
+
+  const handleCreateSession = async () => {
+    setIsSessionCreating(true);
+    try {
+      const response = await fetch("/api/session", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          projectId: process.env.NEXT_PUBLIC_PROJECTID,
+          location: process.env.NEXT_PUBLIC_LOCATION,
+          agentId: process.env.NEXT_PUBLIC_AGENTID,
+          userId,
+        }),
+      });
+      const data = await response.json();
+      if (data.sessionId) {
+        setSessionIdState(data.sessionId);
+        setSessionId(data.sessionId);
+        setHasSession(true);
+        setMessages([]);
+        setIsHistoryLoading(true);
+        fetchSessionEvents(userId, data.sessionId);
+      }
+    } catch (e) {
+      console.error("Session creation failed:", e);
+    } finally {
+      setIsSessionCreating(false);
+    }
+  };
+
+  const addMessage = (
+    sender: "user" | "model" | "system",
+    text: string,
+    id: number = Date.now()
+  ) => {
+    setMessages((prev) => [...prev, {sender, text, id}]);
+  };
+
   return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+    <div className="app">
+      <div className="sidebar">
+        {hasSession && <button
+          className="create-session-button"
+          onClick={handleCreateSession}
+          disabled={isSessionCreating}
+        >
+          {isSessionCreating ? (
+            <FaSpinner className="icon spinner" />
+          ) : (
+            <FaPlus className="icon" />
+          )}
+          <span>Create Session</span>
+        </button>}
+      </div>
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+      <div className="chat-container">
+        {!hasSession ? (
+          <div className="empty-state">
+            <button
+              className="create-session-button large"
+              onClick={handleCreateSession}
+              disabled={isSessionCreating}
+            >
+              {isSessionCreating ? (
+                <FaSpinner className="icon spinner" />
+              ) : (
+                <FaPlus className="icon" />
+              )}
+              <span>Create New Session</span>
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="chat-messages">
+              {isHistoryLoading && (
+                <div className="loading-history">
+                  <FaSpinner className="icon spinner" /> Loading previous
+                  messages...
+                </div>
+              )}
+              <AnimatePresence>
+                {messages.map((msg) => (
+                  <motion.div
+                    key={msg.id}
+                    className={`message ${msg.sender}`}
+                    initial={{opacity: 0, y: 20}}
+                    animate={{opacity: 1, y: 0}}
+                    exit={{opacity: 0}}
+                    transition={{duration: 0.3}}
+                  >
+                    {msg.sender === "model" ? (
+                      <>
+                        <ReactMarkdown>{msg.text}</ReactMarkdown>
+                        {msg.isPending && (
+                          <motion.div
+                            className="typing-indicator"
+                            initial={{opacity: 0}}
+                            animate={{opacity: 1}}
+                          >
+                            <div className="dot"></div>
+                            <div className="dot"></div>
+                            <div className="dot"></div>
+                          </motion.div>
+                        )}
+                      </>
+                    ) : (
+                      msg.text
+                    )}
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+              <div ref={messagesEndRef} />
+            </div>
+
+            <div className="voice-input-container">
+              <button
+                className={`voice-button ${isRecording ? "recording" : ""}`}
+                onClick={isRecording ? stopRecording : startRecording}
+                disabled={
+                  isProcessingAudio ||
+                  isChatLoading ||
+                  isHistoryLoading ||
+                  isSessionCreating
+                }
+              >
+                {isRecording ? (
+                  <FaStop className="icon" />
+                ) : isProcessingAudio ? (
+                  <FaSpinner className="icon spinner" />
+                ) : (
+                  <FaMicrophone className="icon" />
+                )}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
+
+export default App;
+
