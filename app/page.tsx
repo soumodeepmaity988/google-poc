@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, {useState, useEffect, useRef} from "react";
@@ -38,6 +37,15 @@ function App() {
   const [sessionId, setSessionIdState] = useState<string>("");
   const [isHistoryLoading, setIsHistoryLoading] = useState<boolean>(false);
   const [isSessionCreating, setIsSessionCreating] = useState<boolean>(false);
+  const [sessionName, setSessionName] = useState<string>("");
+  const [sessions, setSessions] = useState<
+    {
+      sessionId: string;
+      displayName: string | null;
+      createTime: string;
+      updateTime: string;
+    }[]
+  >([]);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -52,12 +60,86 @@ function App() {
       setHasSession(true);
       setIsHistoryLoading(true);
       fetchSessionEvents(uid, sid);
+      listSessions({
+        projectId: process.env.NEXT_PUBLIC_PROJECTID || "",
+        location: process.env.NEXT_PUBLIC_LOCATION || "",
+        agentId: process.env.NEXT_PUBLIC_AGENTID || "",
+        userId: uid,
+      })
+        .then(setSessions)
+        .catch(console.error);
     }
   }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({behavior: "smooth"});
   }, [messages]);
+
+  async function listSessions({
+    projectId,
+    location,
+    agentId,
+    userId,
+  }: {
+    projectId: string;
+    location: string;
+    agentId: string;
+    userId: string;
+  }) {
+    const params = new URLSearchParams({
+      projectId,
+      location,
+      agentId,
+      userId,
+    });
+
+    const res = await fetch(`/api/session?${params.toString()}`);
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || "Failed to list sessions");
+    }
+    const sortedSessions = sortSessionsByCreateTime(data.sessions);
+    console.log("SESSIONS (sorted) --> ", sortedSessions);
+    return data.sessions; // Array of session objects
+  }
+
+  async function updateSessionDisplayName({
+    projectId,
+    location,
+    agentId,
+    sessionId,
+    newDisplayName,
+  }: {
+    projectId: string;
+    location: string;
+    agentId: string;
+    sessionId: string;
+    newDisplayName: string;
+  }) {
+    const res = await fetch("/api/session", {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        projectId,
+        location,
+        agentId,
+        sessionId,
+        newDisplayName,
+      }),
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || "Failed to update session");
+    }
+
+    return data.updatedSession; // updated session object
+  }
 
   const fetchSessionEvents = async (uid: string, sid: string) => {
     try {
@@ -194,6 +276,95 @@ function App() {
     }
   }
 
+  async function callTitleSummarizerReasoningEngine() {
+    const pendingMessageId = Date.now();
+    if (!messages || messages.length < 2) return;
+
+    try {
+      setIsChatLoading(true);
+
+      const response = await fetch("/api/title-summarize", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          message: `messages: [
+        {
+          role: "user",
+          content: ${messages[0].text},
+        },
+        {
+          role: "assistant",
+          content: ${messages[1].text},
+        },
+      ]`,
+        }),
+      });
+
+      const reader = response.body?.getReader();
+      if (!reader) return;
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let fullResponse = "";
+
+      while (true) {
+        const {done, value} = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, {stream: true});
+        const lines = buffer.split("\n");
+
+        for (let i = 0; i < lines.length - 1; i++) {
+          const line = lines[i].trim();
+          if (!line) continue;
+          try {
+            const parsedData = JSON.parse(line);
+            const textChunk = parsedData?.content?.parts[0]?.text || "";
+            fullResponse += textChunk;
+            setSessionName(fullResponse);
+          } catch {}
+        }
+        buffer = lines[lines.length - 1];
+      }
+
+      // Update the session name after we get the full response
+      if (fullResponse && sessionId) {
+        try {
+          await updateSessionDisplayName({
+            projectId: process.env.NEXT_PUBLIC_PROJECTID || "",
+            location: process.env.NEXT_PUBLIC_LOCATION || "",
+            agentId: process.env.NEXT_PUBLIC_AGENTID || "",
+            sessionId: sessionId,
+            newDisplayName: fullResponse,
+          });
+
+          // Refresh the sessions list
+          const updatedSessions = await listSessions({
+            projectId: process.env.NEXT_PUBLIC_PROJECTID || "",
+            location: process.env.NEXT_PUBLIC_LOCATION || "",
+            agentId: process.env.NEXT_PUBLIC_AGENTID || "",
+            userId: userId,
+          });
+          setSessions(updatedSessions);
+        } catch (error) {
+          console.error("Failed to update session name:", error);
+        }
+      }
+    } catch (error) {
+      console.error("Reasoning engine error:", error);
+    } finally {
+      setIsChatLoading(false);
+    }
+  }
+
+  const sortSessionsByCreateTime = (sessions: any[]) => {
+    return [...sessions].sort((a, b) => {
+      return (
+        new Date(b.createTime).getTime() - new Date(a.createTime).getTime()
+      );
+    });
+  };
+
   useEffect(() => {
     if (convertedText && userId && sessionId) {
       callReasoningEngine(convertedText, userId, sessionId);
@@ -205,7 +376,10 @@ function App() {
   }, [audioBase64]);
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current?.state !== "inactive") {
+    if (
+      mediaRecorderRef.current &&
+      mediaRecorderRef.current?.state !== "inactive"
+    ) {
       mediaRecorderRef.current.stop();
       mediaRecorderRef.current.stream
         ?.getTracks()
@@ -213,6 +387,7 @@ function App() {
       setIsRecording(false);
     }
   };
+
 
   const handleCreateSession = async () => {
     setIsSessionCreating(true);
@@ -234,7 +409,16 @@ function App() {
         setHasSession(true);
         setMessages([]);
         setIsHistoryLoading(true);
-        fetchSessionEvents(userId, data.sessionId);
+        await fetchSessionEvents(userId, data.sessionId);
+
+        // Refresh the sessions list and sort
+        const updatedSessions = await listSessions({
+          projectId: process.env.NEXT_PUBLIC_PROJECTID || "",
+          location: process.env.NEXT_PUBLIC_LOCATION || "",
+          agentId: process.env.NEXT_PUBLIC_AGENTID || "",
+          userId: userId,
+        });
+        setSessions(updatedSessions);
       }
     } catch (e) {
       console.error("Session creation failed:", e);
@@ -242,7 +426,6 @@ function App() {
       setIsSessionCreating(false);
     }
   };
-
   const addMessage = (
     sender: "user" | "model" | "system",
     text: string,
@@ -251,21 +434,62 @@ function App() {
     setMessages((prev) => [...prev, {sender, text, id}]);
   };
 
+  useEffect(() => {
+    if (messages && messages.length >= 2 && messages[1].text.length>0 && sessions && sessions.length > 0) {
+      console.log("sessions =? ", sessions);
+      const currentSession = sessions.find(
+        (session) => session.sessionId === sessionId
+      );
+      if (!currentSession?.displayName) {
+        callTitleSummarizerReasoningEngine();
+      }
+    }
+  }, [messages, sessions]);
+
   return (
     <div className="app">
       <div className="sidebar">
-        {hasSession && <button
-          className="create-session-button"
-          onClick={handleCreateSession}
-          disabled={isSessionCreating}
-        >
-          {isSessionCreating ? (
-            <FaSpinner className="icon spinner" />
-          ) : (
-            <FaPlus className="icon" />
-          )}
-          <span>Create Session</span>
-        </button>}
+        {hasSession && (
+          <button
+            className="create-session-button"
+            onClick={handleCreateSession}
+            disabled={isSessionCreating}
+          >
+            {isSessionCreating ? (
+              <FaSpinner className="icon spinner" />
+            ) : (
+              <FaPlus className="icon" />
+            )}
+            <span>Create Session</span>
+          </button>
+        )}
+        {sessions.length > 0 && (
+          <div className="session-list">
+            <h3 className="session-list-header border-b-[1px] border-b-blue-200">
+              Chats
+            </h3>
+            <ul className="max-h-[calc(100vh-200px)] overflow-y-auto scrollbar-thin scrollbar-thumb-blue-300 scrollbar-track-transparent hover:scrollbar-thumb-blue-400 transition-colors duration-300 pr-2">
+              {sessions.map((session) => (
+                <li
+                  key={session.sessionId}
+                  className={`session-list-item ${
+                    session.sessionId === sessionId ? "active" : ""
+                  }`}
+                  onClick={() => {
+                    setSessionIdState(session.sessionId);
+                    setSessionId(session.sessionId);
+                    setHasSession(true);
+                    setIsHistoryLoading(true);
+                    setMessages([]);
+                    fetchSessionEvents(userId, session.sessionId);
+                  }}
+                >
+                  {session.displayName || "New Conversation"}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
 
       <div className="chat-container">
@@ -355,4 +579,3 @@ function App() {
 }
 
 export default App;
-

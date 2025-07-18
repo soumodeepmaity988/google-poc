@@ -2,21 +2,20 @@
 import {getGoogleAgentAuthToken} from "../../lib/google-auth";
 import {NextResponse} from "next/server";
 
-
-
 export async function POST(req: Request) {
   try {
     const token = await getGoogleAgentAuthToken();
 
     const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID;
-    const agentId = process.env.NEXT_PUBLIC_AGENTID;
+    const agentId = process.env.NEXT_PUBLIC_TITLE_SUMMARIZER_AGENTID;
     if (!projectId) {
       throw new Error("GOOGLE_CLOUD_PROJECT_ID not configured");
     }
 
-    const {message, userId, sessionId} = await req.json();
+    const {message} = await req.json();
 
     const apiUrl = `https://us-central1-aiplatform.googleapis.com/v1/projects/${projectId}/locations/us-central1/reasoningEngines/${agentId}:streamQuery?alt=sse`;
+    // const apiUrl = `https://us-central1-aiplatform.googleapis.com/v1/projects/gen-lang-client-0866166683/locations/us-central1/reasoningEngines/61528670690344960:streamQuery?alt=sse`;
 
     const vertexResponse = await fetch(apiUrl, {
       method: "POST",
@@ -26,11 +25,7 @@ export async function POST(req: Request) {
         Accept: "text/event-stream",
       },
       body: JSON.stringify({
-        input: {
-          message,
-          user_id: userId,
-          session_id: sessionId,
-        },
+        input: {message, user_id: '1234'},
       }),
     });
 
@@ -62,7 +57,7 @@ export async function POST(req: Request) {
         }
       },
     });
-
+    console.log("STREAM ====> ", stream)
     return new Response(stream, {
       headers: {
         "Content-Type": "text/event-stream",
