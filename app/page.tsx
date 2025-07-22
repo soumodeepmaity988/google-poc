@@ -155,13 +155,14 @@ function App() {
       });
       const data = await response.json();
       if (data?.events) {
-        const restoredMessages: Message[] = data.events.map(
-          (event: any, index: number) => ({
+        const restoredMessages: Message[] = data.events
+          .filter((event: any) => event.content && event.content.trim() !== "")
+          .map((event: any, index: number) => ({
             id: Date.now() + index,
             sender: event.role === "user" ? "user" : "model",
             text: event.content || "",
-          })
-        );
+          }));
+        console.log("restoredMessages ====> ", restoredMessages);
         setMessages(restoredMessages);
       }
     } catch (error) {
@@ -254,20 +255,35 @@ function App() {
         for (let i = 0; i < lines.length - 1; i++) {
           const line = lines[i].trim();
           if (!line) continue;
+
           try {
             const parsedData = JSON.parse(line);
-            const textChunk = parsedData?.content?.parts[0]?.text || "";
-            fullResponse += textChunk;
-            setMessages((prev) =>
-              prev.map((msg) =>
-                msg.id === pendingMessageId
-                  ? {...msg, text: fullResponse, isPending: false}
-                  : msg
-              )
-            );
-          } catch {}
+            const textChunk = parsedData?.content?.parts[0]?.text?.trim() || "";
+
+            // Only append and update if there's meaningful content
+            if (textChunk !== "") {
+              fullResponse += textChunk;
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === pendingMessageId
+                    ? {...msg, text: fullResponse, isPending: false}
+                    : msg
+                )
+              );
+            }
+          } catch {
+            // Ignore JSON parse errors
+          }
         }
+
         buffer = lines[lines.length - 1];
+      }
+
+      // Final check: if no meaningful content was added, remove the pending message
+      if (fullResponse.trim() === "") {
+        setMessages((prev) =>
+          prev.filter((msg) => msg.id !== pendingMessageId)
+        );
       }
     } catch (error) {
       console.error("Reasoning engine error:", error);
@@ -275,6 +291,7 @@ function App() {
       setIsChatLoading(false);
     }
   }
+
 
   async function callTitleSummarizerReasoningEngine() {
     const pendingMessageId = Date.now();
@@ -435,6 +452,7 @@ function App() {
   };
 
   useEffect(() => {
+    console.log(messages)
     if (messages && messages.length >= 2 && messages[1].text.length>0 && sessions && sessions.length > 0) {
       // console.log("sessions =? ", sessions);
       const currentSession = sessions.find(
@@ -530,7 +548,7 @@ function App() {
                     {msg.sender === "model" ? (
                       <>
                         <ReactMarkdown>{msg.text}</ReactMarkdown>
-                        {msg.isPending && (
+                        {msg.isPending && (!msg.text || msg.text.length===0) && (
                           <motion.div
                             className="typing-indicator"
                             initial={{opacity: 0}}
