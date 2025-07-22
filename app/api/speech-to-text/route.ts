@@ -65,8 +65,8 @@ export async function POST(request: Request) {
       config: {
         encoding: "MP3",
         sampleRateHertz: 16000,
-        languageCode: "en-US", // Kannada language code
-        // languageCode: process.env.LANGUAGE_CODE || "en-US", // Kannada language code
+        // languageCode: "en-US", // Kannada language code
+        languageCode: process.env.LANGUAGE_CODE || "en-US", // Kannada language code
       },
       audio: {
         content: base64Audio,
