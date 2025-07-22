@@ -38,6 +38,7 @@ function App() {
   const [isHistoryLoading, setIsHistoryLoading] = useState<boolean>(false);
   const [isSessionCreating, setIsSessionCreating] = useState<boolean>(false);
   const [sessionName, setSessionName] = useState<string>("");
+  const [sessionNameUpdateCalled, setSessionNameUpdateCalled] = useState<boolean>(false);
   const [sessions, setSessions] = useState<
     {
       sessionId: string;
@@ -137,7 +138,7 @@ function App() {
     if (!res.ok) {
       throw new Error(data.error || "Failed to update session");
     }
-
+    
     return data.updatedSession; // updated session object
   }
 
@@ -162,7 +163,7 @@ function App() {
             sender: event.role === "user" ? "user" : "model",
             text: event.content || "",
           }));
-        console.log("restoredMessages ====> ", restoredMessages);
+        // console.log("restoredMessages ====> ", restoredMessages);
         setMessages(restoredMessages);
       }
     } catch (error) {
@@ -298,8 +299,8 @@ function App() {
     if (!messages || messages.length < 2) return;
 
     try {
-      setIsChatLoading(true);
-
+      // setIsChatLoading(true);
+      setSessionNameUpdateCalled(true);
       const response = await fetch("/api/title-summarize", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
@@ -370,7 +371,7 @@ function App() {
     } catch (error) {
       console.error("Reasoning engine error:", error);
     } finally {
-      setIsChatLoading(false);
+      // setIsChatLoading(false);
     }
   }
 
@@ -441,6 +442,7 @@ function App() {
       console.error("Session creation failed:", e);
     } finally {
       setIsSessionCreating(false);
+      setSessionNameUpdateCalled(false);
     }
   };
   const addMessage = (
@@ -452,13 +454,11 @@ function App() {
   };
 
   useEffect(() => {
-    console.log(messages)
     if (messages && messages.length >= 2 && messages[1].text.length>0 && sessions && sessions.length > 0) {
-      // console.log("sessions =? ", sessions);
       const currentSession = sessions.find(
         (session) => session.sessionId === sessionId
       );
-      if (!currentSession?.displayName) {
+      if (!currentSession?.displayName &&  !sessionNameUpdateCalled) {
         callTitleSummarizerReasoningEngine();
       }
     }
