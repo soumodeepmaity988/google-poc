@@ -101,7 +101,7 @@ function App() {
       throw new Error(data.error || "Failed to list sessions");
     }
     const sortedSessions = sortSessionsByCreateTime(data.sessions);
-    console.log("SESSIONS (sorted) --> ", sortedSessions);
+    // console.log("SESSIONS (sorted) --> ", sortedSessions);
     return data.sessions; // Array of session objects
   }
 
@@ -436,7 +436,7 @@ function App() {
 
   useEffect(() => {
     if (messages && messages.length >= 2 && messages[1].text.length>0 && sessions && sessions.length > 0) {
-      console.log("sessions =? ", sessions);
+      // console.log("sessions =? ", sessions);
       const currentSession = sessions.find(
         (session) => session.sessionId === sessionId
       );

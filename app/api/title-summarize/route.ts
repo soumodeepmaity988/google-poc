@@ -57,7 +57,7 @@ export async function POST(req: Request) {
         }
       },
     });
-    console.log("STREAM ====> ", stream)
+    // console.log("STREAM ====> ", stream)
     return new Response(stream, {
       headers: {
         "Content-Type": "text/event-stream",
