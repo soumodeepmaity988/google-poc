@@ -310,11 +310,11 @@ function App() {
           role: "user",
           content: ${messages[0].text},
         },
-        {
-          role: "assistant",
-          content: ${messages[1].text},
-        },
-      ]`,
+        ]`,
+          // {
+          //   role: "assistant",
+          //   content: ${messages[1].text},
+          // },
         }),
       });
 
@@ -454,7 +454,7 @@ function App() {
   };
 
   useEffect(() => {
-    if (messages && messages.length >= 2 && messages[1].text.length>0 && sessions && sessions.length > 0) {
+    if (messages && messages.length >= 1 && messages[0].text.length>0 && sessions && sessions.length > 0) {
       const currentSession = sessions.find(
         (session) => session.sessionId === sessionId
       );
