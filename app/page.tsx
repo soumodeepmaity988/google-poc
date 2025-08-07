@@ -454,7 +454,7 @@ function App() {
   };
 
   useEffect(() => {
-    if (messages && messages.length >= 1 && messages[0].text.length>0 && sessions && sessions.length > 0) {
+    if (messages && messages.length >= 1 && messages[0].text && messages[0].text.length>0 && sessions && sessions.length > 0) {
       const currentSession = sessions.find(
         (session) => session.sessionId === sessionId
       );
