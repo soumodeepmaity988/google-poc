@@ -2,6 +2,7 @@ import {NextResponse} from "next/server";
 import {getGoogleAgentAuthToken} from "../../lib/google-auth";
 
 function extractSessionIdFromName(name: string): string | null {
+  if(!name) return null;
   const match = name.match(/\/sessions\/(\d+)\//);
   return match ? match[1] : null;
 }
