@@ -2,7 +2,7 @@
 
 import React, {useState, useEffect, useRef} from "react";
 import ReactMarkdown from "react-markdown";
-import {FaMicrophone, FaPlus, FaStop, FaSpinner} from "react-icons/fa";
+import {FaMicrophone, FaPlus, FaStop, FaSpinner, FaCog} from "react-icons/fa";
 import {motion, AnimatePresence} from "framer-motion";
 import {v4 as uuidv4} from "uuid";
 
@@ -39,6 +39,8 @@ function App() {
   const [isSessionCreating, setIsSessionCreating] = useState<boolean>(false);
   const [sessionName, setSessionName] = useState<string>("");
   const [sessionNameUpdateCalled, setSessionNameUpdateCalled] = useState<boolean>(false);
+  const [languageCode, setLanguageCode] = useState<string>("en-IN");
+  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [sessions, setSessions] = useState<
     {
       sessionId: string;
@@ -206,7 +208,7 @@ function App() {
       const response = await fetch("/api/speech-to-text", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({audio: audioBase64}),
+        body: JSON.stringify({audio: audioBase64, languageCode}),
       });
       const data = await response.json();
       const transcript = data.results[0].alternatives[0].transcript;
@@ -467,6 +469,63 @@ function App() {
   return (
     <div className="app">
       <div className="sidebar">
+        {/* Settings Button */}
+        <button
+          className="flex mb-3.5 items-center gap-2 px-3 py-2 bg-gray-200 hover:bg-gray-300 rounded-lg transition"
+          onClick={() => setIsSettingsOpen(true)}
+        >
+          <FaCog className="text-gray-700" /> Settings
+        </button>
+
+        {/* Animated Settings Drawer */}
+        <AnimatePresence>
+          {isSettingsOpen && (
+            <>
+              {/* Overlay */}
+              <motion.div
+                className="fixed inset-0 bg-black bg-opacity-10 z-40"
+                initial={{opacity: 0}}
+                animate={{opacity: 0.6}}
+                exit={{opacity: 0}}
+                onClick={() => setIsSettingsOpen(false)}
+              />
+
+              {/* Drawer */}
+              <motion.div
+                className="fixed right-0 top-0 h-full w-72 bg-white shadow-lg z-50 p-6 flex flex-col"
+                initial={{x: "100%"}}
+                animate={{x: 0}}
+                exit={{x: "100%"}}
+                transition={{type: "spring", stiffness: 300, damping: 30}}
+              >
+                <div className="flex justify-between items-center mb-6">
+                  <h2 className="text-lg font-semibold">Settings</h2>
+                  <button
+                    onClick={() => setIsSettingsOpen(false)}
+                    className="text-gray-500 hover:text-gray-800"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <label className="text-sm font-medium mb-2">
+                  Select Language
+                </label>
+                <select
+                  value={languageCode}
+                  onChange={(e) => {
+                    setLanguageCode(e.target.value);
+                    localStorage.setItem("languageCode", e.target.value);
+                  }}
+                  className="border border-gray-300 p-2 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400"
+                >
+                  <option value="en-IN">English (India)</option>
+                  <option value="kn-IN">Kannada (India)</option>
+                </select>
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>
         {hasSession && (
           <button
             className="create-session-button"
@@ -548,17 +607,18 @@ function App() {
                     {msg.sender === "model" ? (
                       <>
                         <ReactMarkdown>{msg.text}</ReactMarkdown>
-                        {msg.isPending && (!msg.text || msg.text.length===0) && (
-                          <motion.div
-                            className="typing-indicator"
-                            initial={{opacity: 0}}
-                            animate={{opacity: 1}}
-                          >
-                            <div className="dot"></div>
-                            <div className="dot"></div>
-                            <div className="dot"></div>
-                          </motion.div>
-                        )}
+                        {msg.isPending &&
+                          (!msg.text || msg.text.length === 0) && (
+                            <motion.div
+                              className="typing-indicator"
+                              initial={{opacity: 0}}
+                              animate={{opacity: 1}}
+                            >
+                              <div className="dot"></div>
+                              <div className="dot"></div>
+                              <div className="dot"></div>
+                            </motion.div>
+                          )}
                       </>
                     ) : (
                       msg.text

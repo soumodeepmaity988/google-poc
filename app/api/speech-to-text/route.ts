@@ -4,6 +4,7 @@ import {NextResponse} from "next/server";
 // Define TypeScript interfaces for request/response
 interface SpeechRecognitionRequest {
   audio: string;
+  languageCode: string;
 }
 
 interface GoogleSpeechConfig {
@@ -42,7 +43,8 @@ export async function POST(request: Request) {
       );
     }
 
-    const {audio} = (await request.json()) as SpeechRecognitionRequest;
+    const {audio, languageCode} =
+      (await request.json()) as SpeechRecognitionRequest;
 
     if (!audio) {
       return NextResponse.json(
@@ -65,8 +67,8 @@ export async function POST(request: Request) {
       config: {
         encoding: "MP3",
         sampleRateHertz: 16000,
-        // languageCode: "en-US", // Kannada language code
-        languageCode: process.env.LANGUAGE_CODE || "en-US", // Kannada language code
+        languageCode: languageCode || "en-US", // Kannada language code
+        // languageCode: process.env.LANGUAGE_CODE || "en-US", // Kannada language code
       },
       audio: {
         content: base64Audio,
